@@ -1,0 +1,105 @@
+
+
+
+services:
+  postgres:
+    image: postgres:16
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:latest
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  bot:
+    build: 
+      context: ./bot
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: ${BOT_SERVER_PORT}
+      SPRING_DATASOURCE_URL: ${BOT_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${BOT_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${BOT_DATASOURCE_PASSWORD}
+      SPRING_REDIS_HOST: ${REDIS_HOST}
+      SPRING_REDIS_PORT: ${REDIS_PORT}
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_PROFILES_ACTIVE: prod
+      SCRAPPER_LINK_URL: ${SCRAPPER_LINK_URL}
+    ports:
+      - "${BOT_SERVER_PORT}:${BOT_SERVER_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${BOT_SERVER_PORT}/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./.env:/app/.env  # Монтируем в рабочую директорию
+      - ./.env:/.env       # И в корень контейнера
+
+  scrapper:
+    build: 
+      context: ./scrapper
+      dockerfile: Dockerfile
+    environment:
+      SERVER_PORT: ${SCRAPPER_SERVER_PORT}
+      SPRING_DATASOURCE_URL: ${SCRAPPER_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SCRAPPER_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SCRAPPER_DATASOURCE_PASSWORD}
+      SPRING_REDIS_HOST: ${REDIS_HOST}
+      SPRING_REDIS_PORT: ${REDIS_PORT}
+      SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SPRING_PROFILES_ACTIVE: prod
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      BOT_NOTIFICATION_URL: "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+      
+    ports:
+      - "${SCRAPPER_SERVER_PORT}:${SCRAPPER_SERVER_PORT}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bot:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${SCRAPPER_SERVER_PORT}/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./.env:/app/.env  
+      - ./.env:/.env      
+
+volumes:
+  postgres_data:
